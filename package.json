@@ -1,0 +1,17 @@
+{
+	"name": "sodium-native",
+	"version": "1.0.0",
+	"description": "",
+	"main": "app.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"sodium-native": "^3.4.1"
+	},
+	"devDependencies": {
+		"@types/sodium-native": "^2.3.5"
+	}
+}
