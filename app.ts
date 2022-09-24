@@ -17,9 +17,9 @@ import {
 	verifyHash,
 	bulk_Encrypt_SharedBox,
 	bulk_Decrypt_SharedBox,
-} from './crypto.server';
+} from './sodium-native-wrappers';
 
-import type { IKeyPair } from './crypto.server';
+import type { IKeyPair } from './sodium-native-wrappers';
 
 const sealedBoxTest = async () => {
 	const message = 'Message in a sealed box';
