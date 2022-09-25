@@ -1,3 +1,5 @@
+// noinspection JSUnusedGlobalSymbols
+
 import {
 	crypto_pwhash_OPSLIMIT_MODERATE,
 	crypto_pwhash_MEMLIMIT_MODERATE,
@@ -44,10 +46,10 @@ interface IHashResult {
 }
 
 interface IHashInput {
-	salt?: string | undefined;
-	opsLimit?: number | undefined;
-	memLimit?: number | undefined;
-	alg?: number | undefined;
+	salt: string;
+	opsLimit: number;
+	memLimit: number;
+	alg: number;
 }
 
 const hashDefaults: Pick<IHashInput, 'opsLimit' | 'memLimit' | 'alg'> = {
@@ -58,6 +60,7 @@ const hashDefaults: Pick<IHashInput, 'opsLimit' | 'memLimit' | 'alg'> = {
 
 const keyEncoding: BufferEncoding = 'base64';
 const cipherEncoding: BufferEncoding = 'base64';
+const valueEncoding: BufferEncoding = 'utf8';
 
 const secretKeyBytes = crypto_box_SECRETKEYBYTES;
 const publicKeyBytes = crypto_box_PUBLICKEYBYTES;
@@ -73,19 +76,6 @@ const textEncoding: { [key: string]: BufferEncoding } = {
 	base64: 'base64',
 	hex: 'hex',
 };
-
-const isBase64 = (data: string): boolean => {
-	const base64 = /^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/;
-
-	return base64.test(data);
-};
-
-const isHex = (data: string): boolean => {
-	return /^[A-F0-9]+$/i.test(data);
-};
-
-const getEncoding = (data: string): BufferEncoding =>
-	isBase64(data) ? textEncoding.base64 : isHex(data) ? textEncoding.hex : textEncoding.utf8;
 
 const stringifyHashResult = (hashResult: IHashResult): string => {
 	const hash = hashResult.hash;
@@ -121,8 +111,8 @@ const getHashResultFromStr = (hashResultString: string): IHashResult => {
 	};
 };
 
-const getHashInputsFromStr = (hashInpuStr: string): IHashInput => {
-	const [salt, opsLimitStr, memLimitStr, algStr] = hashInpuStr.split('.');
+const getHashInputsFromStr = (hashInputStr: string): IHashInput => {
+	const [salt, opsLimitStr, memLimitStr, algStr] = hashInputStr.split('.');
 
 	const opsLimit = parseInt(opsLimitStr);
 	const memLimit = parseInt(memLimitStr);
@@ -142,7 +132,7 @@ const getHashInputsFromStr = (hashInpuStr: string): IHashInput => {
 
 const stringifyCipher = ({ encoding, nonce, cipher }: ICipher): string => {
 	const nonceStr = nonce && typeof nonce !== 'string' ? nonce.toString(cipherEncoding) : undefined;
-	const cipherStr = typeof nonce !== 'string' ? cipher.toString(cipherEncoding) : cipher;
+	const cipherStr = typeof cipher !== 'string' ? cipher.toString(cipherEncoding) : cipher;
 
 	if (nonce) {
 		return Object.entries({ cipherStr, encoding: encoding.toString(), nonceStr })
@@ -247,8 +237,6 @@ const generateKeyPairFromPassword = async (
 };
 
 const generatePublicKey = async (secretKey: string): Promise<string> => {
-	const encoding = getEncoding(secretKey);
-
 	const [secretKeyBuff, publicKeyBuff] = createBuffers([
 		{ length: secretKeyBytes, data: secretKey, encoding: keyEncoding },
 		{ length: publicKeyBytes },
@@ -256,16 +244,14 @@ const generatePublicKey = async (secretKey: string): Promise<string> => {
 
 	crypto_scalarmult_base(publicKeyBuff, secretKeyBuff);
 
-	const publicKey = publicKeyBuff.toString(encoding);
+	const publicKey = publicKeyBuff.toString(keyEncoding);
 
 	zeroBuffers([secretKeyBuff, publicKeyBuff]);
 
 	return publicKey;
 };
 
-const generateSharedKey = async (publicKey: string, secretKey: string = undefined): Promise<string> => {
-	const encoding = getEncoding(secretKey);
-
+const generateSharedKey = async (publicKey: string, secretKey: string): Promise<string> => {
 	const [secretKeyBuff, publicKeyBuff, sharedKeyBuff] = createBuffers([
 		{ length: secretKeyBytes, data: secretKey, encoding: keyEncoding },
 		{ length: publicKeyBytes, data: publicKey, encoding: keyEncoding },
@@ -306,21 +292,19 @@ const generateSalt = (): string => {
 };
 
 const encrypt_SecretBox = async (value: string, secretKey: string): Promise<string> => {
-	const encoding = getEncoding(value);
-
-	const valueLength = Buffer.byteLength(value);
+	const valueLength = Buffer.byteLength(value, valueEncoding);
 	const cipherLength = valueLength + macBytes;
 
 	const [nonceBuff, cipherBuff, valueBuff, secretKeyBuff] = createBuffers([
 		{ length: nonceBytes, data: randombytes_buf },
 		{ length: cipherLength },
-		{ length: valueLength, data: value, encoding },
+		{ length: valueLength, data: value, encoding: valueEncoding },
 		{ length: secretKeyBytes, data: secretKey, encoding: keyEncoding },
 	]);
 
 	crypto_secretbox_easy(cipherBuff, valueBuff, nonceBuff, secretKeyBuff);
 
-	const cipherText = stringifyCipher({ encoding, nonce: nonceBuff, cipher: cipherBuff });
+	const cipherText = stringifyCipher({ encoding: valueEncoding, nonce: nonceBuff, cipher: cipherBuff });
 
 	zeroBuffers([cipherBuff, valueBuff, nonceBuff, secretKeyBuff]);
 
@@ -328,7 +312,7 @@ const encrypt_SecretBox = async (value: string, secretKey: string): Promise<stri
 };
 
 const decrypt_SecretBox = async (cipherText: string, secretKey: string): Promise<string> => {
-	const { encoding, nonce, cipher } = getCipherFromStr(cipherText);
+	const { nonce, cipher } = getCipherFromStr(cipherText);
 
 	if (!cipher || typeof cipher !== 'string' || typeof nonce !== 'string') throw new Error('Cipher is invalid');
 
@@ -344,7 +328,7 @@ const decrypt_SecretBox = async (cipherText: string, secretKey: string): Promise
 
 	crypto_secretbox_open_easy(valueBuff, cipherBuff, nonceBuff, secretKeyBuff);
 
-	const value = valueBuff.toString(encoding);
+	const value = valueBuff.toString(valueEncoding);
 
 	zeroBuffers([cipherBuff, valueBuff, nonceBuff, secretKeyBuff]);
 
@@ -352,19 +336,18 @@ const decrypt_SecretBox = async (cipherText: string, secretKey: string): Promise
 };
 
 const encrypt_SealedBox = async (value: string, publicKey: string): Promise<string> => {
-	const encoding = getEncoding(value);
-	const valueLength = Buffer.byteLength(value);
+	const valueLength = Buffer.byteLength(value, valueEncoding);
 	const cipherLength = valueLength + sealBytes;
 
 	const [cipherBuff, valueBuff, publicKeyBuff] = createBuffers([
 		{ length: cipherLength },
-		{ length: valueLength, data: value, encoding },
+		{ length: valueLength, data: value, encoding: valueEncoding },
 		{ length: publicKeyBytes, data: publicKey, encoding: keyEncoding },
 	]);
 
 	crypto_box_seal(cipherBuff, valueBuff, publicKeyBuff);
 
-	const cipherText = stringifyCipher({ encoding, cipher: cipherBuff, nonce: undefined });
+	const cipherText = stringifyCipher({ encoding: valueEncoding, cipher: cipherBuff, nonce: undefined });
 
 	zeroBuffers([cipherBuff, valueBuff, publicKeyBuff]);
 
@@ -396,22 +379,20 @@ const decrypt_SealedBox = async (cipherText: string, publicKey: string, secretKe
 };
 
 const encrypt_SharedBox = async (value: string, publicKey: string, secretKey: string): Promise<string> => {
-	const encoding = getEncoding(value);
-
-	const valueLength = Buffer.byteLength(value, encoding);
+	const valueLength = Buffer.byteLength(value, valueEncoding);
 	const cipherLength = valueLength + macBytes;
 
 	const [nonceBuffer, cipherBuffer, valueBuffer, publicKeyBuffer, secretKeyBuffer] = createBuffers([
 		{ length: nonceBytes, data: randombytes_buf },
 		{ length: cipherLength },
-		{ length: valueLength, data: value, encoding },
+		{ length: valueLength, data: value, encoding: valueEncoding },
 		{ length: publicKeyBytes, data: publicKey, encoding: keyEncoding },
 		{ length: secretKeyBytes, data: secretKey, encoding: keyEncoding },
 	]);
 
 	crypto_box_easy(cipherBuffer, valueBuffer, nonceBuffer, publicKeyBuffer, secretKeyBuffer);
 
-	const cipherText = stringifyCipher({ encoding, nonce: nonceBuffer, cipher: cipherBuffer });
+	const cipherText = stringifyCipher({ encoding: valueEncoding, nonce: nonceBuffer, cipher: cipherBuffer });
 
 	zeroBuffers([nonceBuffer, cipherBuffer, valueBuffer, publicKeyBuffer, secretKeyBuffer]);
 
@@ -474,13 +455,12 @@ const bulk_Encrypt_SharedBox = async (
 		encrypted.push(
 			...(await Promise.all(
 				messages.slice(start, end).map(async (message, index) => {
-					const encoding = getEncoding(message);
-					const valueLength = Buffer.byteLength(message, encoding);
+					const valueLength = Buffer.byteLength(message, valueEncoding);
 					const cipherLength = valueLength + macBytes;
 
 					fillBuffers([
 						{ buffer: nonceBuffer, data: randombytes_buf },
-						{ buffer: valueBuffer, data: message, encoding },
+						{ buffer: valueBuffer, data: message, encoding: valueEncoding },
 						{ buffer: publicKeyBuffer, data: publicKey, encoding: keyEncoding },
 						{ buffer: secretKeyBuffer, data: secretKey, encoding: keyEncoding },
 					]);
@@ -493,7 +473,7 @@ const bulk_Encrypt_SharedBox = async (
 						secretKeyBuffer
 					);
 
-					const cipherText = stringifyCipher({ encoding, nonce: nonceBuffer, cipher: cipherBuffer[index] });
+					const cipherText = stringifyCipher({ encoding: valueEncoding, nonce: nonceBuffer, cipher: cipherBuffer[index] });
 
 					zeroBuffers([cipherBuffer[index], valueBuffer, nonceBuffer, publicKeyBuffer, secretKeyBuffer]);
 
@@ -574,11 +554,9 @@ const bulk_Decrypt_SharedBox = async (
 
 const createHash = async (
 	password: string,
-	hashInput: IHashInput = undefined,
+	hashInput?: IHashInput,
 	hashLength: number = pwHashBytes
 ): Promise<IHashResult> => {
-	const encoding = getEncoding(password);
-
 	const { salt, opsLimit, memLimit, alg } = {
 		salt: hashInput?.salt ?? generateSalt(),
 		opsLimit: hashInput?.opsLimit ?? hashDefaults.opsLimit,
@@ -588,7 +566,7 @@ const createHash = async (
 
 	const [saltBuffer, valueBuffer, hashBuffer] = createBuffers([
 		{ length: saltBytes, data: salt, encoding: keyEncoding },
-		{ length: Buffer.byteLength(password), data: password, encoding },
+		{ length: Buffer.byteLength(password), data: password, encoding: valueEncoding },
 		{ length: hashLength },
 	]);
 
@@ -620,7 +598,7 @@ const verifyHash = async (value: string, hashedValue: string): Promise<boolean> 
 
 const hashPassword = async (password: string): Promise<string> => {
 	const [passwordBuffer, hashBuffer] = createBuffers([
-		{ length: Buffer.byteLength(password), data: password, encoding: getEncoding(password) },
+		{ length: Buffer.byteLength(password), data: password, encoding: valueEncoding },
 		{ length: easyPwHashBytes },
 	]);
 
@@ -635,7 +613,7 @@ const hashPassword = async (password: string): Promise<string> => {
 
 const verifyPassword = async (password: string, hashedPassword: string): Promise<boolean> => {
 	const [passwordBuffer, hashBuffer] = createBuffers([
-		{ length: Buffer.byteLength(password), data: password, encoding: getEncoding(password) },
+		{ length: Buffer.byteLength(password), data: password, encoding: valueEncoding },
 		{ length: easyPwHashBytes, data: hashedPassword, encoding: cipherEncoding },
 	]);
 
