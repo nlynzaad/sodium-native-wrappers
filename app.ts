@@ -430,10 +430,9 @@ const secretEncryptFile = async () => {
 
 	//get your secret key. this will normally be provided by the user/stored somewhere in an encrypted format
 	const password = 'Password1.';
-	const hashInputs: IHashInput = JSON.parse(
-		fs.readFileSync(path.join(__dirname, 'files', 'hashInputs.txt')).toString()
-	);
-	const { secretKey } = await generateSecretKeyFromPassword(password, hashInputs);
+	const { secretKey, hashInputs } = await generateSecretKeyFromPassword(password);
+	//store hashinputs used for key somewhere
+	fs.writeFileSync(path.join(__dirname, 'files', 'hashInputs.txt'), JSON.stringify(hashInputs));
 
 	//generate an instance of the crypto secret stream. when encrypting you must extract and store the header that will be used during encryption
 	const crypt = new cryptoSecretStream('encrypt', secretKey);
@@ -474,8 +473,8 @@ const secretEncryptFile = async () => {
 // })();
 
 // test encryption and decription of stream with authenction added
-// (async () => {
-// 	await secretEncryptFile();
+(async () => {
+	await secretEncryptFile();
 
-// 	await secretDecryptFile();
-// })();
+	await secretDecryptFile();
+})();

@@ -187,3 +187,10 @@ dist
 # Custom rules (everything added below won't be overriden by 'Generate .gitignore File' if you use 'Update' option)
 
 .vscode/settings.json
+files/decrypted.txt
+.gitignore
+files/hashInputs.txt
+files/encrypted.txt
+files/header.txt
+sodium-native-wrappers.js
+app.js
