@@ -1,50 +1,77 @@
-// noinspection JSUnusedGlobalSymbols
+// noinspection JSUnusedGlobalSymbols,TypeScriptCheckImport
 
 import {
-	crypto_pwhash_OPSLIMIT_MODERATE,
-	crypto_pwhash_MEMLIMIT_MODERATE,
-	crypto_pwhash_ALG_DEFAULT,
-	crypto_box_SECRETKEYBYTES,
-	crypto_box_PUBLICKEYBYTES,
-	crypto_box_NONCEBYTES,
-	crypto_pwhash_SALTBYTES,
-	crypto_pwhash_STRBYTES,
-	crypto_box_SEALBYTES,
-	crypto_box_MACBYTES,
-	sodium_malloc,
-	sodium_memzero,
-	crypto_box_keypair,
 	crypto_box_easy,
+	crypto_box_keypair,
+	crypto_box_MACBYTES,
+	crypto_box_NONCEBYTES,
 	crypto_box_open_easy,
+	crypto_box_PUBLICKEYBYTES,
 	crypto_box_seal,
 	crypto_box_seal_open,
+	crypto_box_SEALBYTES,
+	crypto_box_SECRETKEYBYTES,
 	crypto_kdf_keygen,
 	crypto_pwhash,
+	crypto_pwhash_ALG_DEFAULT,
+	crypto_pwhash_MEMLIMIT_MODERATE,
+	crypto_pwhash_OPSLIMIT_MODERATE,
+	crypto_pwhash_SALTBYTES,
 	crypto_pwhash_str,
 	crypto_pwhash_str_verify,
+	crypto_pwhash_STRBYTES,
 	crypto_scalarmult,
 	crypto_scalarmult_base,
 	crypto_secretbox_easy,
 	crypto_secretbox_open_easy,
+	crypto_secretstream_xchacha20poly1305_ABYTES,
+	crypto_secretstream_xchacha20poly1305_HEADERBYTES,
+	crypto_secretstream_xchacha20poly1305_KEYBYTES,
+	// @ts-ignore typescript definitions are outdated
+	crypto_secretstream_xchacha20poly1305_STATEBYTES,
+	crypto_secretstream_xchacha20poly1305_TAGBYTES,
 	randombytes_buf,
+	sodium_malloc,
+	sodium_memzero,
+	crypto_stream_xor_STATEBYTES,
+	crypto_stream_KEYBYTES,
+	crypto_stream_NONCEBYTES,
+	// @ts-ignore typescript definitions are outdated
+	crypto_stream_xor_update,
+	// @ts-ignore typescript definitions are outdated
+	crypto_stream_xor_init,
+	// @ts-ignore typescript definitions are outdated
+	crypto_stream_xor_final,
+	crypto_secretstream_xchacha20poly1305_init_push,
+	crypto_secretstream_xchacha20poly1305_init_pull,
+	crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
+	crypto_secretstream_xchacha20poly1305_push,
+	crypto_secretstream_xchacha20poly1305_pull,
 } from 'sodium-native';
+import { Transform, Readable, TransformCallback } from 'node:stream';
 
+//declare interfaces and types
+
+//cipher interface containing the cipher, the nonce used for the cipher and the encoding.
 interface ICipher {
 	encoding: BufferEncoding;
 	nonce: Buffer | string | undefined;
 	cipher: Buffer | string;
 }
 
+//keypair interface contains the public and private keys in a keypair.
 interface IKeyPair {
 	publicKey: string;
 	secretKey: string;
 }
 
+//result of hash function containing the hash and the inputs used to derive the hash
 interface IHashResult {
 	hash: string;
 	hashInputs: IHashInput;
 }
 
+//inputs required for hashing of values.
 interface IHashInput {
 	salt: string;
 	opsLimit: number;
@@ -52,16 +79,28 @@ interface IHashInput {
 	alg: number;
 }
 
+//actions allowed for secret stream encryption.
+type ISecretStreamAction = 'encrypt' | 'decrypt';
+
+//default hashinput values
 const hashDefaults: Pick<IHashInput, 'opsLimit' | 'memLimit' | 'alg'> = {
 	opsLimit: crypto_pwhash_OPSLIMIT_MODERATE,
 	memLimit: crypto_pwhash_MEMLIMIT_MODERATE,
 	alg: crypto_pwhash_ALG_DEFAULT,
 };
 
+//default encoding types
 const keyEncoding: BufferEncoding = 'base64';
 const cipherEncoding: BufferEncoding = 'base64';
 const valueEncoding: BufferEncoding = 'utf8';
 
+const textEncoding: { [key: string]: BufferEncoding } = {
+	utf8: 'utf8',
+	base64: 'base64',
+	hex: 'hex',
+};
+
+//default constants used throughout
 const secretKeyBytes = crypto_box_SECRETKEYBYTES;
 const publicKeyBytes = crypto_box_PUBLICKEYBYTES;
 const nonceBytes = crypto_box_NONCEBYTES;
@@ -70,18 +109,26 @@ const saltBytes = crypto_pwhash_SALTBYTES;
 const pwHashBytes = 32;
 const easyPwHashBytes = crypto_pwhash_STRBYTES;
 const sealBytes = crypto_box_SEALBYTES;
+const secretStreamABytes = crypto_secretstream_xchacha20poly1305_ABYTES;
+const secretStreamTagBytes = crypto_secretstream_xchacha20poly1305_TAGBYTES;
+const secretStreamMessageTag = crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
+const secretStreamRawChunkBytes = new Readable().readableHighWaterMark - secretStreamABytes;
+const secretStreamEncryptedChunkBytes = secretStreamRawChunkBytes + secretStreamABytes;
+const secretStreamHeaderBytes = crypto_secretstream_xchacha20poly1305_HEADERBYTES;
+const secretStreamKeyBytes = crypto_secretstream_xchacha20poly1305_KEYBYTES;
+const secretStreamStateBytes = crypto_secretstream_xchacha20poly1305_STATEBYTES;
+const streamChunkBytes = new Readable().readableHighWaterMark;
+const streamStateBytes = crypto_stream_xor_STATEBYTES;
+const streamKeyBytes = crypto_stream_KEYBYTES;
+const streamNonceBytes = crypto_stream_NONCEBYTES;
 
-const textEncoding: { [key: string]: BufferEncoding } = {
-	utf8: 'utf8',
-	base64: 'base64',
-	hex: 'hex',
-};
-
+//helper function to concatenate the hash results into a single string
 const stringifyHashResult = (hashResult: IHashResult): string => {
 	const hash = hashResult.hash;
 	return hash.concat('.', stringifyHashInputs(hashResult.hashInputs));
 };
 
+//helper function to concatenate the hash inputs into a single string
 const stringifyHashInputs = (hashInput: IHashInput): string => {
 	return Object.entries(hashInput)
 		.sort((a, b) => a[0].localeCompare(b[0]))
@@ -89,6 +136,7 @@ const stringifyHashInputs = (hashInput: IHashInput): string => {
 		.join('.');
 };
 
+//helper function to extract the hash results from a hashed string
 const getHashResultFromStr = (hashResultString: string): IHashResult => {
 	const [hash, algStr, memLimitStr, opsLimitStr, salt] = hashResultString.split('.');
 
@@ -111,8 +159,9 @@ const getHashResultFromStr = (hashResultString: string): IHashResult => {
 	};
 };
 
+//helper function to extract the hash inputs from a string
 const getHashInputsFromStr = (hashInputStr: string): IHashInput => {
-	const [salt, opsLimitStr, memLimitStr, algStr] = hashInputStr.split('.');
+	const [algStr, memLimitStr, opsLimitStr, salt] = hashInputStr.split('.');
 
 	const opsLimit = parseInt(opsLimitStr);
 	const memLimit = parseInt(memLimitStr);
@@ -130,6 +179,7 @@ const getHashInputsFromStr = (hashInputStr: string): IHashInput => {
 	};
 };
 
+//helper function to concatenate the cipher values into a single string
 const stringifyCipher = ({ encoding, nonce, cipher }: ICipher): string => {
 	const nonceStr = nonce && typeof nonce !== 'string' ? nonce.toString(cipherEncoding) : undefined;
 	const cipherStr = typeof cipher !== 'string' ? cipher.toString(cipherEncoding) : cipher;
@@ -147,6 +197,7 @@ const stringifyCipher = ({ encoding, nonce, cipher }: ICipher): string => {
 		.join('.');
 };
 
+//helper function to extract the cipher values from a string
 const getCipherFromStr = (cipherStr: string): ICipher => {
 	const splitStr = cipherStr.split('.');
 
@@ -169,45 +220,78 @@ const getCipherFromStr = (cipherStr: string): ICipher => {
 	};
 };
 
+//helper function to create buffers from an array of input values.
+//these buffers can the be prepopulated using predefined string values/buffers or functions that accept the buffer as input
 const createBuffers = (
-	inputArray: { length: number; data?: string | ((buffer: Buffer) => void); encoding?: BufferEncoding }[]
+	inputArray: { length: number; data?: string | Buffer | ((buffer: Buffer) => void); encoding?: BufferEncoding }[]
 ): Buffer[] => {
 	return inputArray.map((input) => {
-		if (input.data && typeof input.data == 'string' && Buffer.byteLength(input.data, input.encoding) !== input.length)
+		//check that the input data and specified lengths match
+		if (
+			input.data &&
+			((typeof input.data === 'string' && Buffer.byteLength(input.data, input.encoding) !== input.length) ||
+				(typeof input.data !== 'function' && typeof input.data !== 'string' && input.data.length !== input.length))
+		)
 			throw new Error(`Input value is not of length ${input.length}`);
 
+		//create new buffer allocation
 		const buffer = sodium_malloc(input.length);
 
+		//if data was provided populate buffer based on the type of data provided
 		if (input.data) {
-			if (typeof input.data == 'string') {
-				buffer.write(input.data, input.encoding);
-			} else {
-				input.data(buffer);
+			switch (typeof input.data) {
+				case 'string':
+					buffer.write(input.data, input.encoding);
+					break;
+				case 'function':
+					input.data(buffer);
+					break;
+				default:
+					input.data.copy(buffer);
 			}
 		}
 
+		//return buffer
 		return buffer;
 	});
 };
 
+//fill existing array of buffers with data.
+//these buffers can the be populated using string values/buffers or functions that accept the buffer as input
 const fillBuffers = (
-	inputArray: { buffer: Buffer; data: string | ((buffer: Buffer) => void); encoding?: BufferEncoding }[]
+	inputArray: { buffer: Buffer; data: string | Buffer | ((buffer: Buffer) => void); encoding?: BufferEncoding }[]
 ) => {
 	inputArray.forEach((input) => {
 		if (input.data) {
-			if (typeof input.data == 'string') {
-				input.buffer.write(input.data, input.encoding);
-			} else {
-				input.data(input.buffer);
+			switch (typeof input.data) {
+				case 'string':
+					input.buffer.write(input.data, input.encoding);
+					break;
+				case 'function':
+					input.data(input.buffer);
+					break;
+				default:
+					input.data.copy(input.buffer);
 			}
 		}
 	});
 };
 
+//write zeros to an array of burrers
 const zeroBuffers = (buffers: Buffer[]) => {
 	return buffers.map((buffer) => sodium_memzero(buffer));
 };
 
+//helper function generate random value given the size required.
+//usefull for nonce values
+const generateRandomValue = (size: number): string => {
+	const [valueBuffer] = createBuffers([{ length: size, data: randombytes_buf }]);
+	const value = valueBuffer.toString(keyEncoding);
+	zeroBuffers([valueBuffer]);
+	return value;
+};
+
+//helper function to generate a keyPair
 const generateKeyPair = async (): Promise<IKeyPair> => {
 	const [secretKeyBuff, publicKeyBuff] = createBuffers([{ length: secretKeyBytes }, { length: publicKeyBytes }]);
 
@@ -223,6 +307,7 @@ const generateKeyPair = async (): Promise<IKeyPair> => {
 	return keyPair;
 };
 
+//helper function to generate a keypair derived from  a user provided password
 const generateKeyPairFromPassword = async (
 	password: string,
 	hashInput: IHashInput | undefined = undefined
@@ -236,6 +321,7 @@ const generateKeyPairFromPassword = async (
 	};
 };
 
+//helper function to generate a public key derived from a user provided secret
 const generatePublicKey = async (secretKey: string): Promise<string> => {
 	const [secretKeyBuff, publicKeyBuff] = createBuffers([
 		{ length: secretKeyBytes, data: secretKey, encoding: keyEncoding },
@@ -251,6 +337,7 @@ const generatePublicKey = async (secretKey: string): Promise<string> => {
 	return publicKey;
 };
 
+//helper function to generate a shared key derived from a sender's secret key and a receiver's public key
 const generateSharedKey = async (publicKey: string, secretKey: string): Promise<string> => {
 	const [secretKeyBuff, publicKeyBuff, sharedKeyBuff] = createBuffers([
 		{ length: secretKeyBytes, data: secretKey, encoding: keyEncoding },
@@ -267,6 +354,7 @@ const generateSharedKey = async (publicKey: string, secretKey: string): Promise<
 	return sharedKey;
 };
 
+//helper function to generate a secret key derived from a user provided password
 const generateSecretKeyFromPassword = async (
 	password: string,
 	hashInput: IHashInput | undefined = undefined
@@ -276,12 +364,14 @@ const generateSecretKeyFromPassword = async (
 	return { secretKey, hashInputs };
 };
 
+//helper function to generate a random secret key
 const generateSecretKey = async (): Promise<string> => {
 	const [secretKeyBuffer] = createBuffers([{ length: secretKeyBytes, data: crypto_kdf_keygen }]);
 
 	return secretKeyBuffer.toString(keyEncoding);
 };
 
+//helper function to generate a random salt
 const generateSalt = (): string => {
 	const [saltBuff] = createBuffers([{ length: saltBytes, data: randombytes_buf }]);
 
@@ -291,6 +381,7 @@ const generateSalt = (): string => {
 	return salt;
 };
 
+//function to create a secret box encrypting a value using a user's secret key
 const encrypt_SecretBox = async (value: string, secretKey: string): Promise<string> => {
 	const valueLength = Buffer.byteLength(value, valueEncoding);
 	const cipherLength = valueLength + macBytes;
@@ -311,6 +402,7 @@ const encrypt_SecretBox = async (value: string, secretKey: string): Promise<stri
 	return cipherText;
 };
 
+//function to open a secret box using a user's secret key
 const decrypt_SecretBox = async (cipherText: string, secretKey: string): Promise<string> => {
 	const { nonce, cipher } = getCipherFromStr(cipherText);
 
@@ -335,6 +427,7 @@ const decrypt_SecretBox = async (cipherText: string, secretKey: string): Promise
 	return value;
 };
 
+//function to create a sealed box encrypting a value using a recipient's public key
 const encrypt_SealedBox = async (value: string, publicKey: string): Promise<string> => {
 	const valueLength = Buffer.byteLength(value, valueEncoding);
 	const cipherLength = valueLength + sealBytes;
@@ -354,6 +447,7 @@ const encrypt_SealedBox = async (value: string, publicKey: string): Promise<stri
 	return cipherText;
 };
 
+//function to open a sealed box using the recipient's public and private key
 const decrypt_SealedBox = async (cipherText: string, publicKey: string, secretKey: string): Promise<string> => {
 	const { encoding, cipher } = getCipherFromStr(cipherText);
 
@@ -378,6 +472,7 @@ const decrypt_SealedBox = async (cipherText: string, publicKey: string, secretKe
 	return value;
 };
 
+//function to create a shared box using the recipient's public and the sender's private key
 const encrypt_SharedBox = async (value: string, publicKey: string, secretKey: string): Promise<string> => {
 	const valueLength = Buffer.byteLength(value, valueEncoding);
 	const cipherLength = valueLength + macBytes;
@@ -399,6 +494,7 @@ const encrypt_SharedBox = async (value: string, publicKey: string, secretKey: st
 	return cipherText;
 };
 
+//function to open a shared box using the recipient's private and the sender's public key
 const decrypt_SharedBox = async (cipherText: string, publicKey: string, secretKey: string): Promise<string> => {
 	const { encoding, nonce, cipher } = getCipherFromStr(cipherText);
 
@@ -424,6 +520,7 @@ const decrypt_SharedBox = async (cipherText: string, publicKey: string, secretKe
 	return value;
 };
 
+//helper function to assist bulk creation of shared boxes given an array of messages using the recipient's public and the sender's private key
 const bulk_Encrypt_SharedBox = async (
 	messages: string[],
 	publicKey: string,
@@ -473,7 +570,11 @@ const bulk_Encrypt_SharedBox = async (
 						secretKeyBuffer
 					);
 
-					const cipherText = stringifyCipher({ encoding: valueEncoding, nonce: nonceBuffer, cipher: cipherBuffer[index] });
+					const cipherText = stringifyCipher({
+						encoding: valueEncoding,
+						nonce: nonceBuffer,
+						cipher: cipherBuffer[index],
+					});
 
 					zeroBuffers([cipherBuffer[index], valueBuffer, nonceBuffer, publicKeyBuffer, secretKeyBuffer]);
 
@@ -486,6 +587,7 @@ const bulk_Encrypt_SharedBox = async (
 	return encrypted;
 };
 
+//helper function to assist bulk openiong of shared boxes given an array of shared boxes using the recipient's private and the sender's public key
 const bulk_Decrypt_SharedBox = async (
 	encMessages: Array<string>,
 	publicKey: string,
@@ -552,6 +654,8 @@ const bulk_Decrypt_SharedBox = async (
 	return encrypted;
 };
 
+//function to create a hash of a value, with optional specification of hash inputs and hash length.
+//this is the recommended way to derive a key from a given input.
 const createHash = async (
 	password: string,
 	hashInput?: IHashInput,
@@ -587,6 +691,7 @@ const createHash = async (
 	};
 };
 
+//verify the hash created by the create hash function and concatenated using the stringifyHashResult helper function
 const verifyHash = async (value: string, hashedValue: string): Promise<boolean> => {
 	const hashResult = getHashResultFromStr(hashedValue);
 
@@ -596,6 +701,9 @@ const verifyHash = async (value: string, hashedValue: string): Promise<boolean> 
 	);
 };
 
+//function to create hash from as value.
+//hash inputs is derived and stored with the hash and not available for custom handling/storing.
+//ideal usage is for passwords that needs to be hashed and compared easily
 const hashPassword = async (password: string): Promise<string> => {
 	const [passwordBuffer, hashBuffer] = createBuffers([
 		{ length: Buffer.byteLength(password), data: password, encoding: valueEncoding },
@@ -611,6 +719,7 @@ const hashPassword = async (password: string): Promise<string> => {
 	return hash;
 };
 
+//function to verify password against hash from hashPassword function.
 const verifyPassword = async (password: string, hashedPassword: string): Promise<boolean> => {
 	const [passwordBuffer, hashBuffer] = createBuffers([
 		{ length: Buffer.byteLength(password), data: password, encoding: valueEncoding },
@@ -624,8 +733,124 @@ const verifyPassword = async (password: string, hashedPassword: string): Promise
 	return result;
 };
 
+//class used to encrypt/decrypt streams without adding additional authentication information.
+//this is a transform stream and hence to be used inside a stream pipeline.
+class cryptoStream extends Transform {
+	private _secretKeyBuffer: Buffer;
+	private _nonceBuffer: Buffer;
+	private _stateBuffer: Buffer;
+
+	constructor(secretKey: string, nonce: string) {
+		super();
+
+		this._stateBuffer = sodium_malloc(streamStateBytes);
+		this._nonceBuffer = sodium_malloc(streamNonceBytes);
+		this._secretKeyBuffer = sodium_malloc(streamKeyBytes);
+
+		this._nonceBuffer.fill(nonce, 0, streamNonceBytes, keyEncoding);
+		this._secretKeyBuffer.fill(secretKey, 0, streamKeyBytes, keyEncoding);
+
+		crypto_stream_xor_init(this._stateBuffer, this._nonceBuffer, this._secretKeyBuffer);
+	}
+
+	_transform(chunk: any, encoding: BufferEncoding, callback: TransformCallback): void {
+		const buff = sodium_malloc(chunk.length);
+
+		crypto_stream_xor_update(this._stateBuffer, buff, chunk);
+
+		this.push(buff);
+
+		callback();
+	}
+
+	_flush(callback: TransformCallback): void {
+		crypto_stream_xor_final(this._stateBuffer);
+		sodium_memzero(this._stateBuffer);
+		sodium_memzero(this._nonceBuffer);
+		sodium_memzero(this._secretKeyBuffer);
+
+		callback();
+	}
+}
+
+//class used to encrypt/decrypt streams with additional authentication information.
+//this is a transform stream and hence to be used inside a stream pipeline.
+class cryptoSecretStream extends Transform {
+	private _secretKeyBuffer: Buffer;
+	private _headerBuffer: Buffer;
+	private _stateBuffer: Buffer;
+	public header: string;
+
+	constructor(private action: ISecretStreamAction, secretKey: string, header: string = undefined) {
+		super();
+
+		if (action === 'decrypt' && !header) {
+			throw new Error('For decryption the header must be specified');
+		}
+
+		this._secretKeyBuffer = sodium_malloc(secretStreamKeyBytes);
+		this._stateBuffer = sodium_malloc(secretStreamStateBytes);
+		this._headerBuffer = sodium_malloc(secretStreamHeaderBytes);
+
+		this._secretKeyBuffer.fill(secretKey, 0, secretStreamKeyBytes, keyEncoding);
+
+		if (action === 'decrypt') {
+			this._headerBuffer.fill(header, 0, secretStreamHeaderBytes, keyEncoding);
+		}
+
+		if (action === 'encrypt') {
+			//@ts-ignore
+			crypto_secretstream_xchacha20poly1305_init_push(this._stateBuffer, this._headerBuffer, this._secretKeyBuffer);
+			this.header = this._headerBuffer.toString(keyEncoding);
+		} else {
+			//@ts-ignore
+			crypto_secretstream_xchacha20poly1305_init_pull(this._stateBuffer, this._headerBuffer, this._secretKeyBuffer);
+		}
+	}
+
+	_transform(chunk: any, encoding: BufferEncoding, callback: TransformCallback): void {
+		const buff = sodium_malloc(
+			this.action === 'encrypt' ? chunk.length + secretStreamABytes : chunk.length - secretStreamABytes
+		);
+
+		const tagBuff = sodium_malloc(secretStreamTagBytes);
+
+		if (this.action === 'encrypt') {
+			crypto_secretstream_xchacha20poly1305_push(
+				//@ts-ignore
+				this._stateBuffer,
+				buff,
+				chunk,
+				null,
+				secretStreamMessageTag
+			);
+		} else {
+			crypto_secretstream_xchacha20poly1305_pull(
+				//@ts-ignore
+				this._stateBuffer,
+				buff,
+				tagBuff,
+				chunk,
+				null
+			);
+			sodium_memzero(tagBuff);
+		}
+
+		this.push(buff);
+
+		callback();
+	}
+
+	_flush(callback: TransformCallback): void {
+		sodium_memzero(this._stateBuffer);
+		callback();
+	}
+}
+
+//export various types
 export type { IKeyPair, IHashInput, IHashResult, ICipher };
 
+//export various functions
 export {
 	bulk_Decrypt_SharedBox,
 	bulk_Encrypt_SharedBox,
@@ -660,4 +885,12 @@ export {
 	pwHashBytes,
 	easyPwHashBytes,
 	sealBytes,
+	streamChunkBytes,
+	generateRandomValue,
+	streamNonceBytes,
+	streamKeyBytes,
+	cryptoStream,
+	cryptoSecretStream,
+	secretStreamRawChunkBytes,
+	secretStreamEncryptedChunkBytes,
 };
